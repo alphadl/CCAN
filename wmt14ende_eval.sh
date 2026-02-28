@@ -1,15 +1,30 @@
-databin=databin/ende/distill_de
-src=en
-tgt=de
+#!/usr/bin/env bash
+# Decode and compute BLEU. Env: DATA, CHECKPOINT, [RUN_NAME], [GPU], [SUBSET], [OUT].
+set -e
+RUN_NAME="${1:-default}"
+GPU="${2:-0}"
+DATA="${DATA:-databin/ende/distill_de}"
+CHECKPOINT="${CHECKPOINT:?Set CHECKPOINT=path/to/checkpoint_dir}"
+CKPT="${CKPT:-checkpoint_best.pt}"
+SUBSET="${SUBSET:-test}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OUT="${OUT:-wmt14ende_rst/${RUN_NAME}}"
+mkdir -p "$OUT"
 
-model_path=wmt14ende_model
-log_path=wmt14ende_log
+export CUDA_VISIBLE_DEVICES="$GPU"
+python "$ROOT/generate_cmlm.py" "$DATA" \
+  --path "$CHECKPOINT/$CKPT" \
+  --task translation_self \
+  --gen-subset "$SUBSET" \
+  --remove-bpe \
+  --decoding-iterations 10 \
+  --decoding-strategy mask_predict \
+  --max-sentences 90 \
+  > "$OUT/out.out" 2>&1
 
-
-# the name should obey this format: range**_apply**, for example: range11_apply123456
-model_dir=${model_path}/$1
-log_dir=${log_path}/$1
-
-CUDA_VISIBLE_DEVICES=$2 python generate_cmlm.py ${databin} --path ${model_dir}/checkpoint_***.pt --task translation_self --remove-bpe --decoding-iterations 10 --decoding-strategy mask_predict --max-sentences 90 > wmt14ende_rst/$1/out.out
-
-sh scripts/BLEU.sh wmt14/full en de wmt14ende_rst/$1/out.out
+if [ -n "$REF" ] && [ -f "$REF" ]; then
+  grep ^H "$OUT/out.out" | sed 's/^H\-//' | sort -n -k 1 | awk -F '\t' '{print $NF}' > "$OUT/out.hyp"
+  sacrebleu "$REF" -i "$OUT/out.hyp" -b
+else
+  bash "$ROOT/scripts/BLEU.sh" wmt14/full en de "$OUT/out.out"
+fi
